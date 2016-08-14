@@ -1,0 +1,165 @@
+---
+title: "Machine Learning - Final Project"
+author: "Parker Finn"
+date: "August 13, 2016"
+output: html_document
+---
+
+## Executive Summary
+
+This project uses data collected from six individuals to model and predict the quality of a weightlifting exercise. The data was collected from accelerometers on the belt, forearm, arm, and dumbell of each participant. The original study collected data as each individual performed dumbbell curls according to five different specifications:  
+
+* exactly according to the specification (Class A)
+* throwing the elbows to the front (Class B)
+* lifting the dumbbell only halfway (Class C)
+* lowering the dumbbell only halfway (Class D) 
+* throwing the hips to the front (Class E)
+
+Using the train function from the Caret package, an rpart model was tested followed by a Random Forest model. The Random Forest model successfully predicts the class with very high accuracy. 
+
+Data is from the WLE dataset from the Qualitative Activity Recognition of Weight Lifting Exercises study. (http://groupware.les.inf.puc-rio.br/har)
+
+```{r, include = F, warnings = F}
+
+setwd("~/Desktop/Coursera/Machine Learning")
+#setwd("C:/Users/finnp/Downloads/Machine Learning")
+
+library(caret)
+library(ggplot2)
+library(dplyr)
+library(stringr)
+```
+
+```{r, include=FALSE}
+knitr::opts_chunk$set(cache=TRUE)
+```
+
+### Evaluation of Data
+
+```{r}
+
+testing <- read.csv("pml-testing.csv")
+training <- read.csv("pml-training.csv")
+
+```
+
+The training data set includes 19,622 observations and 160 variables. Fields include the subject's name and the quality of their lifting, labeled as "classe" and coded with A, B, C, D or E. 
+```{r, echo=FALSE}
+table(training$classe, training$user_name)
+```
+
+The first seven variables include time stamps, user names and other data not necessary for the analysis. These are removed. Many variables appear to be unnecessary derivatives of other variables.
+```{r, echo=FALSE}
+# First seven fields do not need to be in data. Filter.
+training1 <- select(training, -(X:num_window))
+```
+
+The data is further refined by checking for zero or near zero variance predictors. 59 variables are found to be near zero varianec, i.e. they have few unique values relative to the number of samples and one value dominates. They will likely not add to the analysis and are removed. 
+
+```{r}
+#Check for near zero covariates
+nsv <- nearZeroVar(training1, saveMetrics = T)
+table(nsv[,"nzv"])
+
+#Keep fields that are "false" for near zero variance
+training2 <- training1[, nsv[,"nzv"]==FALSE] 
+```
+
+A large number of variables remain with high NA counts. For each, there are 19,216 NA and 406 values, or nearly 98% of the data as NA. On inspection it seems clear that these variables are calculated from the other variables, presenting values such as standard deviation, max and min. These are removed to produce a final data set of 19,622 observations with 53 variables.
+
+```{r, include=FALSE}
+sort(sapply(training2, function(x) sum(is.na(x))), decreasing = T)
+```
+
+```{r}
+# Remove fields with high NA
+highNA <- sapply(training2, function(x) sum(is.na(x))) == 19216
+
+table(highNA)
+training3 <- training2[, highNA==FALSE] 
+
+```
+
+### Create Training and Test Set for Evaluation
+
+The resulting data is split into a new training set (60%) and testing set (40%) for model evaluation and testing. The "classe" variable, which will be predicted, is set as the outcome in the partition.
+
+The new training set has 11,776 observations. The new test set has 7,846 observations.
+
+```{r}
+
+set.seed(987)
+data <- createDataPartition(training3$classe, p = 0.6, list = F)
+
+trainingNew <- training3[data,]
+testingNew <- training3[-data,]
+
+```
+
+### RPART Model 
+
+The first model uses the Caret package to train a model using the rpart method. Default train control settings are used.
+
+This model is a poor predictor. The best tuning of cp = 0.041 only produces Accuracy of 48%. 
+
+```{r} 
+set.seed(1234)
+mod1 <- train(classe ~ ., data = trainingNew, method = "rpart")
+mod1
+table(predict(mod1, trainingNew, type = "raw"), trainingNew$classe)
+```
+
+```{r, include=FALSE}
+# try preprocessing data with pca
+
+mod1.5 <-train(classe ~ ., data = trainingNew, preProcess = c("pca"), method = "rpart")
+mod1.5
+
+```
+
+A plot of the tree with training data indicates poor performance. Further evaluation was made by preprocessing data with principal component analysis (pca), but this produced similarly poor results.
+
+```{r, echo=FALSE, fig.height=4, fig.width=5}
+
+par(mar=c(1,1,1,1))
+plot(mod1$finalModel)
+text(mod1$finalModel, use.n=T, all = T, cex = 0.8)
+title("RPART")
+
+```
+
+### Random Forest Model
+
+The Random Forest method is used to evaluate the training set. Given the large number of variables, this method is able to optimize a much better model. Cross-validation is used with 5 folds. 
+
+The resulting model is highly accurate with an error rate of 0.82% with the training set. 
+
+```{r, cache = TRUE, message=FALSE, warning=FALSE}
+
+# Random Forest Model
+set.seed(1234)
+mod2 <- train(classe ~ ., data = trainingNew, method = "rf", 
+              trControl = trainControl(method="cv", number = 5))
+
+mod2$finalModel
+
+```
+
+The model has high accuracy at both low and high values of mtry. Variable Importance shows roll_belt and yaw_belt as two influential variables, though many more show importance as well.
+
+```{r, fig.height=4, fig.width=5}
+mod2$results
+varImp(mod2)
+plot(mod2)
+
+```
+
+## Final Result - Evaluating Test Data
+
+Testing the final model on the test data produces excellent results. Accuracy is 99%. (Note that this is the data split from the initial training set, not the test data to be used for the quiz.)
+
+```{r}
+
+confusionMatrix(predict(mod2, newdata = testingNew), testingNew$classe)
+
+```
